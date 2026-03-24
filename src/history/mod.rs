@@ -233,7 +233,7 @@ impl HistoryManager {
                         }
                     }
 
-                    if start.elapsed().unwrap_or(Duration::from_secs(0)).as_secs() > 5 {
+                    if start.elapsed().unwrap_or(Duration::from_secs(0)).as_secs() > 30 {
                         return Err(DebuggerError::FileError(format!(
                             "Timed out waiting for history lock at {:?}",
                             lock_path
@@ -351,14 +351,14 @@ mod tests {
     #[test]
     fn test_regression_detection() {
         let p1 = RunHistory {
-            date: "prev".into(),
+            date: "2026-01-01T00:00:00Z".into(),
             contract_hash: "hash".into(),
             function: "func".into(),
             cpu_used: 1000,
             memory_used: 1000,
         };
         let p2 = RunHistory {
-            date: "latest".into(),
+            date: "2026-01-02T00:00:00Z".into(),
             contract_hash: "hash".into(),
             function: "func".into(),
             cpu_used: 1150,    // 15% increase
