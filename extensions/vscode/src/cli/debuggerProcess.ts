@@ -14,6 +14,8 @@ export interface DebuggerProcessConfig {
   binaryPath?: string;
   port?: number;
   token?: string;
+  requestTimeoutMs?: number;
+  connectTimeoutMs?: number;
   /**
    * When false, `start()` will only connect to an already-running debugger server
    * at `port` and will not spawn the CLI process.
@@ -183,24 +185,25 @@ export class DebuggerProcess {
     const port = this.config.port ?? await this.findAvailablePort();
     this.port = port;
 
-    if (shouldSpawnServer) {
-      const child = spawn(binaryPath as string, this.buildArgs(port), {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          ...(this.config.trace ? { RUST_LOG: 'debug' } : {})
-        }
-      });
-      this.process = child;
+    try {
+      if (shouldSpawnServer) {
+        const child = spawn(binaryPath as string, this.buildArgs(port), {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            ...(this.config.trace ? { RUST_LOG: 'debug' } : {})
+          }
+        });
+        this.childProcess = child;
 
-      child.once('exit', () => {
-        this.rejectPendingRequests(new Error('Debugger server exited'));
-        this.socket?.destroy();
-        this.socket = null;
-      });
-    } else if (!this.config.port) {
-      throw new Error('DebuggerProcessConfig.port is required when spawnServer is false');
-    }
+        child.once('exit', () => {
+          this.rejectPendingRequests(new Error('Debugger server exited'));
+          this.socket?.destroy();
+          this.socket = null;
+        });
+      } else if (!this.config.port) {
+        throw new Error('DebuggerProcessConfig.port is required when spawnServer is false');
+      }
 
       await this.waitForServer(port);
       this.logManager?.log(LogLevel.Info, LogPhase.Connect, `Connecting to debugger server on port ${port}...`);
