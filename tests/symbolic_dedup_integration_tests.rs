@@ -69,6 +69,8 @@ fn same_seed_produces_identical_exploration_order() {
         max_paths: 10,
         max_input_combinations: 20,
         timeout_secs: 30,
+        max_breadth: 10,
+        max_depth: 3,
         seed: Some(12345),
     };
 
@@ -105,6 +107,8 @@ fn different_seeds_produce_different_exploration_order() {
         max_paths: 6,
         max_input_combinations: 6,
         timeout_secs: 30,
+        max_breadth: 5,
+        max_depth: 2,
         seed: Some(1),
     };
     let config_b = SymbolicConfig {

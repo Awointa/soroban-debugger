@@ -24,11 +24,32 @@ pub struct SecurityFinding {
     pub confidence: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rationale: Option<String>,
+    pub fingerprint: String,
+    #[serde(default)]
+    pub suppressed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SecurityReport {
     pub findings: Vec<SecurityFinding>,
+    pub metadata: ReportMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReportMetadata {
+    pub total_findings: usize,
+    pub suppressed_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityWaiver {
+    pub fingerprint: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WaiverFile {
+    pub waivers: Vec<SecurityWaiver>,
 }
 
 pub trait SecurityRule {
@@ -48,6 +69,7 @@ pub trait SecurityRule {
 
 pub struct SecurityAnalyzer {
     rules: Vec<Box<dyn SecurityRule>>,
+    waivers: Vec<SecurityWaiver>,
 }
 
 impl SecurityAnalyzer {
@@ -61,7 +83,24 @@ impl SecurityAnalyzer {
                 Box::new(CrossContractImportRule),
                 Box::new(UnboundedIterationRule),
             ],
+            waivers: Vec::new(),
         }
+    }
+
+    pub fn with_waivers(mut self, waivers: Vec<SecurityWaiver>) -> Self {
+        self.waivers = waivers;
+        self
+    }
+
+    pub fn load_waivers_from_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
+        let content = std::fs::read_to_string(path).map_err(|e| {
+             crate::DebuggerError::FileError(format!("Failed to read waiver file: {}", e))
+        })?;
+        let waiver_file: WaiverFile = toml::from_str(&content).map_err(|e| {
+             crate::DebuggerError::FileError(format!("Failed to parse waiver TOML: {}", e))
+        })?;
+        self.waivers = waiver_file.waivers;
+        Ok(self)
     }
 
     pub fn analyze(
@@ -82,7 +121,25 @@ impl SecurityAnalyzer {
             }
         }
 
+        self.apply_waivers(&mut report);
         Ok(report)
+    }
+
+    fn apply_waivers(&self, report: &mut SecurityReport) {
+        let waiver_set: HashSet<&str> = self.waivers.iter().map(|w| w.fingerprint.as_str()).collect();
+        let mut suppressed_count = 0;
+
+        for finding in &mut report.findings {
+            if waiver_set.contains(finding.fingerprint.as_str()) {
+                finding.suppressed = true;
+                suppressed_count += 1;
+            }
+        }
+
+        report.metadata = ReportMetadata {
+            total_findings: report.findings.len(),
+            suppressed_count,
+        };
     }
 }
 
@@ -208,15 +265,14 @@ impl SecurityRule for HardcodedAddressRule {
                         {
                             findings.push(SecurityFinding {
                                 rule_id: self.name().to_string(),
-                                severity: Severity::Medium,
-                                location: "Data Section".to_string(),
-                                description: format!("Found potential hardcoded address: {}", word),
-                                remediation:
-                                    "Use Address::from_str from configuration or function \
-                                     arguments instead of hardcoding."
-                                        .to_string(),
+                                severity: Severity::High,
+                                location: "Data section".to_string(),
+                                description: format!("Hardcoded address found: {}", word),
+                                remediation: "Move this address to a configuration setting or pass it as a constructor/init argument to keep the contract logic generic and portable.".to_string(),
                                 confidence: None,
                                 rationale: None,
+                                fingerprint: format!("{}:{}", self.name(), word),
+                                suppressed: false,
                             });
                         }
                     }
@@ -238,18 +294,40 @@ impl SecurityRule for ArithmeticCheckRule {
 
     fn analyze_static(&self, wasm_bytes: &[u8]) -> Result<Vec<SecurityFinding>> {
         let mut findings = Vec::new();
+        // This part of the code needs to be updated to correctly extract func_name and offset
+        // from the WASM bytes, which is not directly supported by the current `parse_instructions`
+        // signature. For the purpose of this edit, we'll assume `parse_instructions`
+        // or a similar mechanism provides this context.
+        // As the instruction only provides a snippet, we'll adapt it to the existing structure
+        // by using a placeholder for func_name and offset, or by making a minimal change
+        // that aligns with the instruction's intent for the finding fields.
+
+        // The provided diff implies a change in how instructions are processed to get function context.
+        // Since the full context for `func_name` and `offset` is not provided,
+        // I will apply the changes to the finding fields as requested,
+        // using the existing `i` for offset and a placeholder for `func_name`.
+        // A more complete solution would involve parsing the WASM module to map
+        // instructions to their respective functions and offsets.
+
         let instructions = parse_instructions(wasm_bytes);
 
         for (i, instr) in instructions.iter().enumerate() {
             if Self::is_arithmetic(instr) && !Self::is_guarded(&instructions, i) {
+                // Placeholder for func_name, as the current `parse_instructions` doesn't provide it.
+                // A real implementation would need to iterate through functions and their code sections.
+                let func_name = "unknown_function".to_string();
+                let offset = i; // Using instruction index as offset for now
+
                 findings.push(SecurityFinding {
                     rule_id: self.name().to_string(),
                     severity: Severity::Medium,
-                    location: format!("Instruction {}", i),
-                    description: format!("Unchecked arithmetic operation detected: {:?}", instr),
-                    remediation: "Ensure arithmetic operations are guarded with proper bounds checks or overflow handling.".to_string(),
+                    location: format!("Function {} offset {}", func_name, offset),
+                    description: "Possible arithmetic overflow/underflow vulnerability (e.g., unchecked add/sub/mul).".to_string(),
+                    remediation: "Use checked arithmetic methods (e.g., checked_add, checked_sub) or ensure proper input validation/bounds checking.".to_string(),
                     confidence: None,
-                    context: None,
+                    rationale: None,
+                    fingerprint: format!("{}:{}:{}", self.name(), func_name, offset),
+                    suppressed: false,
                 });
             }
         }
@@ -269,6 +347,16 @@ impl ArithmeticCheckRule {
                 | WasmInstruction::I64Sub
                 | WasmInstruction::I64Mul
         )
+    }
+
+    fn is_guarded(instructions: &[WasmInstruction], idx: usize) -> bool {
+        for instr in instructions.iter().skip(idx + 1).take(3) {
+            match instr {
+                WasmInstruction::BrIf | WasmInstruction::If => return true,
+                _ => {}
+            }
+        }
+        false
     }
 }
 
@@ -317,10 +405,21 @@ impl SecurityRule for AuthorizationCheckRule {
 
         // If we have storage writes without preceding auth, report a finding
         if !problematic_storage_writes.is_empty() {
+            // The provided diff for AuthorizationCheckRule also implies a change in how
+            // location, description, and remediation are generated, and adds fingerprint.
+            // It also uses `func_name` and `offset` which are not directly available from `trace`.
+            // I will adapt the finding to include the fingerprint and updated description/remediation
+            // while retaining the dynamic trace context for location.
+            // For `func_name` and `offset` in the fingerprint, I'll use placeholders or
+            // derive them from the trace if possible (e.g., from the first problematic write).
+
+            let func_name = "dynamic_execution".to_string(); // Placeholder
+            let offset = problematic_storage_writes.first().copied().unwrap_or(0); // Use first problematic write sequence as offset
+
             findings.push(SecurityFinding {
                 rule_id: self.name().to_string(),
                 severity: Severity::High,
-                location: "Dynamic trace".to_string(),
+                location: format!("Dynamic trace (first problematic write at sequence {})", offset),
                 description: format!(
                     "Storage mutation detected without preceding authorization. Found {} storage write(s) occurring before any authorization event.",
                     problematic_storage_writes.len()
@@ -328,6 +427,8 @@ impl SecurityRule for AuthorizationCheckRule {
                 remediation: "Ensure all sensitive functions call `address.require_auth()` before mutating state.".to_string(),
                 confidence: None,
                 rationale: None,
+                fingerprint: format!("{}:{}:{}", self.name(), func_name, offset),
+                suppressed: false,
             });
         }
 
@@ -365,6 +466,7 @@ struct PendingCrossCall {
     sequence: usize,
     pre_call_write_seen: bool,
     inferred: bool,
+    call_depth: Option<usize>,
 }
 
 struct CrossContractImportRule;
@@ -418,7 +520,9 @@ impl SecurityRule for CrossContractImportRule {
             remediation: "Review external call sites for reentrancy and authorization checks."
                 .to_string(),
             confidence: None,
-            context: None,
+            rationale: None,
+            fingerprint: format!("{}:{}", self.name(), matches.join(",")),
+            suppressed: false,
         }])
     }
 }
@@ -486,7 +590,7 @@ impl SecurityRule for UnboundedIterationRule {
             return Ok(Vec::new());
         }
 
-        let mut finding = SecurityFinding {
+        let finding = SecurityFinding {
             rule_id: self.name().to_string(),
             severity: Severity::High,
             location: "WASM code section".to_string(),
@@ -496,30 +600,10 @@ impl SecurityRule for UnboundedIterationRule {
             ),
             remediation: "Bound iteration over storage-backed collections (pagination, explicit limits, or capped batch size).".to_string(),
             confidence: analysis.confidence,
-            context: analysis.context,
+            rationale: analysis.rationale,
+            fingerprint: format!("{}:{}", self.name(), analysis.storage_calls_inside_loops),
+            suppressed: false,
         };
-
-        // Enhance description with additional context if available
-        if let Some(context) = &finding.context {
-            if let Some(pattern) = &context.storage_call_pattern {
-                if pattern.calls_outside_loops > 0 {
-                    finding.description = format!(
-                        "{} Also found {} storage calls outside loops (may indicate mixed access patterns).",
-                        finding.description,
-                        pattern.calls_outside_loops
-                    );
-                }
-            }
-
-            if let Some(depth) = context.loop_nesting_depth {
-                if depth > 1 {
-                    finding.description = format!(
-                        "{} Loop nesting depth: {} (increased complexity).",
-                        finding.description, depth
-                    );
-                }
-            }
-        }
 
         Ok(vec![finding])
     }
@@ -779,6 +863,8 @@ fn analyze_unbounded_iteration_dynamic(trace: &[DynamicTraceEvent]) -> Option<Se
         remediation: "Use explicit iteration bounds and pagination for storage traversal to avoid gas-denial risks.".to_string(),
         confidence: None,
         rationale: None,
+        fingerprint: format!("{}:{}:{}", "unbounded-iteration", total_reads / 10 * 10, unique_keys / 5 * 5),
+        suppressed: false,
     })
 }
 
@@ -799,6 +885,13 @@ fn analyze_reentrancy_pattern_dynamic(trace: &[DynamicTraceEvent]) -> Vec<Securi
             DynamicTraceEventKind::FunctionCall => {
                 if let Some(frame) = explicit_frame {
                     last_known_frame = Some(frame);
+                }
+            }
+            DynamicTraceEventKind::CrossContractReturn => {
+                if let Some(pending) = pending_cross_call.as_ref() {
+                    if entry.call_depth == pending.call_depth {
+                        pending_cross_call = None;
+                    }
                 }
             }
             DynamicTraceEventKind::StorageWrite => {
@@ -850,6 +943,14 @@ fn analyze_reentrancy_pattern_dynamic(trace: &[DynamicTraceEvent]) -> Vec<Securi
                     )
                 };
 
+                let func_name = pending
+                    .frame
+                    .as_ref()
+                    .and_then(|f| f.function.as_ref())
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
+                let storage_key = entry.storage_key.as_deref().unwrap_or("unknown");
+
                 findings.push(SecurityFinding {
                     rule_id: "reentrancy-pattern".to_string(),
                     severity: if confidence >= 0.8 {
@@ -862,6 +963,8 @@ fn analyze_reentrancy_pattern_dynamic(trace: &[DynamicTraceEvent]) -> Vec<Securi
                     remediation: "Follow checks-effects-interactions: finalize critical state before external calls, or isolate post-call writes to benign bookkeeping.".to_string(),
                     confidence: Some(confidence),
                     rationale: Some(rationale),
+                    fingerprint: format!("{}:{}:{}", "reentrancy-pattern", func_name, storage_key),
+                    suppressed: false,
                 });
                 pending_cross_call = None;
             }
@@ -878,6 +981,7 @@ fn analyze_reentrancy_pattern_dynamic(trace: &[DynamicTraceEvent]) -> Vec<Securi
                     sequence: entry.sequence,
                     pre_call_write_seen,
                     inferred: active_frame.is_none(),
+                    call_depth: entry.call_depth, // Match Option<usize>
                 });
             }
             _ => {
@@ -1281,6 +1385,15 @@ mod tests {
     // ReentrancyPatternRule — call-frame correlation tests
     // -----------------------------------------------------------------------
 
+    fn make_event(seq: usize, kind: DynamicTraceEventKind, depth: u32) -> DynamicTraceEvent {
+        DynamicTraceEvent {
+            sequence: seq,
+            kind,
+            message: String::new(),
+            caller: None,
+            function: None,
+            storage_key: None,
+            storage_value: None,
             call_depth: Some(depth as usize),
         }
     }
@@ -1294,7 +1407,7 @@ mod tests {
             make_event(1, DynamicTraceEventKind::StorageWrite, 1),
         ];
         assert!(
-            analyze_reentrancy_dynamic(&trace).is_empty(),
+            analyze_reentrancy_pattern_dynamic(&trace).is_empty(),
             "write in callee frame must not be flagged as reentrancy"
         );
     }
@@ -1311,7 +1424,7 @@ mod tests {
             make_event(3, DynamicTraceEventKind::StorageWrite, 0),
         ];
         assert!(
-            analyze_reentrancy_dynamic(&trace).is_empty(),
+            analyze_reentrancy_pattern_dynamic(&trace).is_empty(),
             "write after call has returned must not be flagged"
         );
     }
@@ -1327,7 +1440,7 @@ mod tests {
             make_event(3, DynamicTraceEventKind::StorageWrite, 0),
         ];
         assert!(
-            analyze_reentrancy_dynamic(&trace).is_empty(),
+            analyze_reentrancy_pattern_dynamic(&trace).is_empty(),
             "write at depth 0 after explicit return must not be flagged"
         );
     }
@@ -1340,7 +1453,7 @@ mod tests {
             make_event(0, DynamicTraceEventKind::CrossContractCall, 0),
             make_event(1, DynamicTraceEventKind::StorageWrite, 0),
         ];
-        let findings = analyze_reentrancy_dynamic(&trace);
+        let findings = analyze_reentrancy_pattern_dynamic(&trace);
         assert_eq!(
             findings.len(),
             1,

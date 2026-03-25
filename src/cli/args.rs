@@ -988,12 +988,12 @@ pub struct SymbolicArgs {
     /// reproducible. The emitted "Replay token" value can be passed here
     /// or to `--replay` on any subsequent run to reproduce the exact same
     /// path ordering.
-    #[arg(long, value_name = "N")]
+    #[arg(long, value_name = "N", conflicts_with = "replay")]
     pub seed: Option<u64>,
 
     /// An alias for `--seed`. Pass a "Replay token" from a previous run
     /// to reproduce the identical exploration order.
-    #[arg(long, value_name = "TOKEN")]
+    #[arg(long, value_name = "TOKEN", conflicts_with = "seed")]
     pub replay: Option<u64>,
 }
 
@@ -1119,6 +1119,14 @@ pub struct AnalyzeArgs {
     /// Output format (text, json)
     #[arg(long, default_value = "text")]
     pub format: String,
+
+    /// Path to the security waivers TOML file (optional)
+    #[arg(long)]
+    pub waivers: Option<PathBuf>,
+
+    /// Show suppressed findings in the report
+    #[arg(long, default_value_t = false)]
+    pub show_suppressed: bool,
 }
 
 #[derive(Parser)]

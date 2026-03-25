@@ -460,6 +460,18 @@ impl RemoteClient {
         })?;
         self.stream = BufReader::new(stream);
         self.authenticated = self.token.is_none();
+
+        // Perform handshake
+        let handshake = DebugRequest::Handshake {
+            client_name: "rust-remote-client".to_string(),
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_min: 1,
+            protocol_max: 1,
+        };
+        // Use a standard timeout for handshake during reconnect
+        let _ = self.send_request_once(handshake, Duration::from_secs(5))
+            .map_err(|e| DebuggerError::ExecutionError(format!("Handshake failed during reconnect: {:?}", e)))?;
+
         if let Some(token) = self.token.clone() {
             self.authenticate(&token)?;
         }
@@ -668,7 +680,7 @@ fn backoff_delay(base: Duration, max: Duration, attempt: usize) -> Duration {
         return base.min(max);
     }
 
-    let exp = 1u32.saturating_shl((attempt - 1).min(31) as u32);
+    let exp = 1u32 << (attempt - 1).min(31) as u32;
     let delay = base.checked_mul(exp).unwrap_or(max).min(max);
     delay
 }
@@ -750,9 +762,25 @@ mod tests {
 
         std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                // Consume one request line but never respond.
-                let mut reader = BufReader::new(&mut stream);
+                // Handle handshake
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let msg: DebugMessage = serde_json::from_str(line.trim_end()).unwrap();
+                let handshake_ack = DebugMessage::response(
+                    msg.id,
+                    DebugResponse::HandshakeAck {
+                        server_name: "test-server".to_string(),
+                        server_version: "0.1.0".to_string(),
+                        protocol_min: 1,
+                        protocol_max: 1,
+                        selected_version: 1,
+                    },
+                );
+                let _ = writeln!(stream, "{}", serde_json::to_string(&handshake_ack).unwrap());
+
+                // Consume ping but never respond.
+                line.clear();
                 let _ = reader.read_line(&mut line);
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -761,6 +789,7 @@ mod tests {
         let config = RemoteClientConfig {
             timeouts: RequestTimeouts {
                 ping: Duration::from_millis(50),
+                default: Duration::from_millis(1000), // Allow time for handshake
                 ..RequestTimeouts::default()
             },
             retry: RetryPolicy {
@@ -785,25 +814,49 @@ mod tests {
 
         std::thread::spawn(move || {
             for stream in listener.incoming().take(2) {
-                let mut stream = stream.unwrap();
+                let stream = stream.unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut writer = stream;
                 let attempt = seen_server.fetch_add(1, Ordering::SeqCst);
 
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                // 1. Handshake
                 let mut line = String::new();
-                let _ = reader.read_line(&mut line);
-
-                if attempt == 0 {
-                    // Drop connection without responding.
-                    drop(stream);
+                if let Ok(n) = reader.read_line(&mut line) {
+                    if n > 0 {
+                        let msg: DebugMessage = serde_json::from_str(line.trim_end()).unwrap();
+                        let handshake_ack = DebugMessage::response(
+                            msg.id,
+                            DebugResponse::HandshakeAck {
+                                server_name: "test-server".to_string(),
+                                server_version: "0.1.0".to_string(),
+                                protocol_min: 1, protocol_max: 1, selected_version: 1,
+                            },
+                        );
+                        let _ = writeln!(writer, "{}", serde_json::to_string(&handshake_ack).unwrap());
+                        let _ = writer.flush();
+                    } else {
+                         continue;
+                    }
+                } else {
                     continue;
                 }
 
-                let msg: DebugMessage = serde_json::from_str(line.trim_end()).unwrap();
-                let id = msg.id;
-                let response = DebugMessage::response(id, DebugResponse::Pong);
-                let json = serde_json::to_string(&response).unwrap();
-                let _ = writeln!(stream, "{}", json);
-                let _ = stream.flush();
+                if attempt == 0 {
+                    // Force a disconnect after handshake but before processing the next request
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+
+                // 2. Ping
+                line.clear();
+                if let Ok(n) = reader.read_line(&mut line) {
+                    if n > 0 {
+                        let msg: DebugMessage = serde_json::from_str(line.trim_end()).unwrap();
+                        let response = DebugMessage::response(msg.id, DebugResponse::Pong);
+                        let _ = writeln!(writer, "{}", serde_json::to_string(&response).unwrap());
+                        let _ = writer.flush();
+                    }
+                }
             }
         });
 

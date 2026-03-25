@@ -760,6 +760,7 @@ mod tests {
                 truncated_by_input_cap: false,
                 truncated_by_path_cap: false,
                 truncated_by_timeout: false,
+                seed: None,
                 truncation_reasons: Vec::new(),
             },
         };
@@ -789,6 +790,7 @@ mod tests {
                 truncated_by_input_cap: false,
                 truncated_by_path_cap: false,
                 truncated_by_timeout: false,
+                seed: None,
                 truncation_reasons: Vec::new(),
             },
         };
@@ -880,6 +882,8 @@ mod tests {
             max_paths: 10,
             max_input_combinations: 36,
             timeout_secs: 30,
+            max_breadth: 10,
+            max_depth: 3,
             seed: Some(99),
         };
         let config_b = SymbolicConfig { seed: Some(99), ..config_a.clone() };
@@ -901,6 +905,8 @@ mod tests {
             max_paths: 5,
             max_input_combinations: 36,
             timeout_secs: 30,
+            max_breadth: 10,
+            max_depth: 3,
             seed: None,
         };
 
@@ -928,6 +934,7 @@ mod tests {
                 truncated_by_input_cap: true,
                 truncated_by_path_cap: false,
                 truncated_by_timeout: false,
+                seed: None,
                 truncation_reasons: vec![
                     "input combination cap reached at 64 generated combinations".to_string(),
                 ],

@@ -1,8 +1,8 @@
 use crate::analyzer::upgrade::{CompatibilityReport, ExecutionDiff, UpgradeAnalyzer};
-use crate::analyzer::{security::SecurityAnalyzer, symbolic::SymbolicAnalyzer};
+use crate::analyzer::{security::SecurityAnalyzer, symbolic::{SymbolicAnalyzer, SymbolicConfig}};
 use crate::cli::args::{
     AnalyzeArgs, CompareArgs, InspectArgs, InteractiveArgs, OptimizeArgs, ProfileArgs, RemoteArgs,
-    ReplArgs, ReplayArgs, RunArgs, ScenarioArgs, ServerArgs, SymbolicArgs, TuiArgs,
+    ReplArgs, ReplayArgs, RunArgs, ScenarioArgs, ServerArgs, SymbolicArgs, SymbolicProfile, TuiArgs,
     UpgradeCheckArgs, Verbosity,
 };
 use crate::debugger::engine::DebuggerEngine;
@@ -73,6 +73,7 @@ struct DynamicAnalysisMetadata {
 #[derive(serde::Serialize)]
 struct AnalyzeCommandOutput {
     findings: Vec<crate::analyzer::security::SecurityFinding>,
+    metadata: crate::analyzer::security::ReportMetadata,
     dynamic_analysis: Option<DynamicAnalysisMetadata>,
     warnings: Vec<String>,
 }
@@ -185,19 +186,26 @@ fn render_security_report(output: &AnalyzeCommandOutput) -> String {
     }
 
     if output.findings.is_empty() {
-        lines.push("No security findings detected.".to_string());
+        if output.metadata.suppressed_count > 0 {
+             lines.push(format!("No active findings. ({} findings suppressed by waivers)", output.metadata.suppressed_count));
+        } else {
+             lines.push("No security findings detected.".to_string());
+        }
         return lines.join("\n");
     }
 
-    lines.push(format!("Findings: {}", output.findings.len()));
+    lines.push(format!("Findings: {} ({} suppressed)", output.metadata.total_findings, output.metadata.suppressed_count));
     for (idx, finding) in output.findings.iter().enumerate() {
+        let suppression_tag = if finding.suppressed { " [SUPPRESSED]" } else { "" };
         lines.push(format!(
-            "  {}. [{:?}] {} at {}",
+            "  {}. [{:?}]{} {} at {}",
             idx + 1,
             finding.severity,
+            suppression_tag,
             finding.rule_id,
             finding.location
         ));
+        lines.push(format!("     Fingerprint: {}", finding.fingerprint));
         lines.push(format!("     {}", finding.description));
         if let Some(confidence) = finding.confidence {
             lines.push(format!("     Confidence: {:.0}%", confidence * 100.0));
@@ -2136,14 +2144,24 @@ pub fn analyze(args: AnalyzeArgs, _verbosity: Verbosity) -> Result<()> {
         }
     }
 
-    let analyzer = SecurityAnalyzer::new();
+    let mut analyzer = SecurityAnalyzer::new();
+    if let Some(waiver_path) = &args.waivers {
+        analyzer = analyzer.load_waivers_from_file(waiver_path)?;
+    }
     let report = analyzer.analyze(
         &wasm_file.bytes,
         executor.as_ref(),
         trace_entries.as_deref(),
     )?;
+
+    let mut findings = report.findings;
+    if !args.show_suppressed {
+        findings.retain(|f| !f.suppressed);
+    }
+
     let output = AnalyzeCommandOutput {
-        findings: report.findings,
+        findings,
+        metadata: report.metadata,
         dynamic_analysis,
         warnings,
     };

@@ -259,6 +259,7 @@ fn main() -> miette::Result<()> {
                         metadata: false,
                         expected_hash: None,
                         dependency_graph: None,
+                        format: soroban_debugger::cli::args::OutputFormat::Pretty,
                     },
                     verbosity,
                 );
