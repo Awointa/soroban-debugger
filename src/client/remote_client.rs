@@ -473,7 +473,7 @@ impl Drop for RemoteClient {
 mod tests {
     use super::*;
     use crate::server::protocol::DebugResponse;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, ErrorKind, Write};
     use std::net::TcpListener;
     use std::thread;
     use std::time::Duration;
@@ -502,7 +502,11 @@ mod tests {
 
     #[test]
     fn reuses_buffered_stream_across_rapid_requests() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let listener = match TcpListener::bind("127.0.0.1:0") {
+            Ok(listener) => listener,
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => return,
+            Err(err) => panic!("bind test listener: {err}"),
+        };
         let addr = listener.local_addr().expect("listener address");
 
         let server = thread::spawn(move || {
