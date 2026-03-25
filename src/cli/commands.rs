@@ -1552,7 +1552,7 @@ pub fn compare(args: CompareArgs) -> Result<()> {
     let trace_b = crate::compare::ExecutionTrace::from_file(&args.trace_b)?;
 
     print_info("Comparing traces...");
-    let report = crate::compare::CompareEngine::compare(&trace_a, &trace_b);
+    let report = crate::compare::CompareEngine::compare(&trace_a, &trace_b, args.context);
     let rendered = crate::compare::CompareEngine::render_report(&report);
 
     if let Some(output_path) = &args.output {
@@ -1674,7 +1674,7 @@ pub fn replay(args: ReplayArgs, verbosity: Verbosity) -> Result<()> {
 
     // Compare results
     print_info("\n--- Comparison ---");
-    let report = crate::compare::CompareEngine::compare(&truncated_original, &replayed_trace);
+    let report = crate::compare::CompareEngine::compare(&truncated_original, &replayed_trace, args.context);
     let rendered = crate::compare::CompareEngine::render_report(&report);
 
     if let Some(output_path) = &args.output {

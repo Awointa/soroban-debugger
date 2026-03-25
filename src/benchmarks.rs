@@ -17,7 +17,7 @@ pub enum RegressionStatus {
     Fail,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ComparisonConfig {
     pub warn_pct: f64,
     pub fail_pct: f64,

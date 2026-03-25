@@ -94,6 +94,8 @@ pub struct DynamicTraceEvent {
     pub message: String,
     pub caller: Option<String>,
     pub function: Option<String>,
+    #[serde(default)]
+    pub call_depth: Option<usize>,
     pub storage_key: Option<String>,
     pub storage_value: Option<String>,
 }
@@ -478,6 +480,6 @@ mod tests {
             "call_depth": 5
         }"#;
         let event: DynamicTraceEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.call_depth, 5);
+        assert_eq!(event.call_depth, Some(5));
     }
 }
