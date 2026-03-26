@@ -81,7 +81,9 @@ pub enum DynamicTraceEventKind {
     #[default]
     Diagnostic,
     FunctionCall,
+    /// Read-side storage pressure feeds unbounded-iteration analysis.
     StorageRead,
+    /// Write-side storage pressure feeds storage-write-pressure analysis.
     StorageWrite,
     Authorization,
     CrossContractCall,
@@ -393,9 +395,8 @@ impl DebugMessage {
     /// Parse a JSON string into a DebugMessage with field-aware error reporting.
     pub fn parse(json: &str) -> std::result::Result<Self, String> {
         let deserializer = &mut serde_json::Deserializer::from_str(json);
-        serde_path_to_error::deserialize(deserializer).map_err(|e| {
-            format!("Protocol error at '{}': {}", e.path(), e.inner())
-        })
+        serde_path_to_error::deserialize(deserializer)
+            .map_err(|e| format!("Protocol error at '{}': {}", e.path(), e.inner()))
     }
 }
 
@@ -471,7 +472,11 @@ mod tests {
             }
         }"#;
         let err = DebugMessage::parse(json).unwrap_err();
-        assert!(err.contains("client_version"), "Error should mention missing field: {}", err);
+        assert!(
+            err.contains("request.client_version"),
+            "Error should mention missing field: {}",
+            err
+        );
     }
 
     #[test]
