@@ -74,8 +74,8 @@ async function startMockDebuggerServer(options: {
           case "LoadSnapshot":
             respond({ type: "SnapshotLoaded", summary: "ok" });
             break;
-          case "LoadContract":
-            respond({ type: "ContractLoaded", size: 0 });
+          case 'LoadContract':
+            respond({ type: 'ContractLoaded', size: 0 });
             break;
           case 'Ping':
             respond({ type: 'Pong' });
