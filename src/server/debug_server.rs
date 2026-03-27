@@ -271,6 +271,30 @@ impl DebugServer {
                 }
             }
 
+            // Backward compatibility: allow Authenticate before handshake.
+            if let DebugRequest::Authenticate { token } = &request {
+                let success = self
+                    .token
+                    .as_deref()
+                    .map(|server_token| server_token == token)
+                    .unwrap_or(true);
+                authenticated = success;
+                let response = DebugResponse::Authenticated {
+                    success,
+                    message: if success {
+                        "Authentication successful".to_string()
+                    } else {
+                        "Authentication failed".to_string()
+                    },
+                };
+                let response = DebugMessage::response(message.id, response);
+                send_msg(response)?;
+                if !success {
+                    return Ok(());
+                }
+                continue;
+            }
+
             if !handshake_done {
                 let response = DebugMessage::response(
                     message.id,
