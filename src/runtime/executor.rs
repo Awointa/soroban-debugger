@@ -29,6 +29,8 @@ pub use crate::runtime::mocking::MockCallLogEntry as MockCallEntry;
 pub use crate::runtime::result::{ExecutionRecord, InstructionCounts, StorageSnapshot};
 
 /// Executes Soroban contracts in a test environment.
+pub const DEFAULT_EXECUTION_TIMEOUT_SECS: u64 = 30;
+
 pub struct ContractExecutor {
     env: Env,
     contract_address: Address,
@@ -55,7 +57,7 @@ impl ContractExecutor {
             last_memory_summary: None,
             mock_registry: Arc::new(Mutex::new(MockRegistry::default())),
             wasm_bytes: wasm,
-            timeout_secs: 30,
+            timeout_secs: DEFAULT_EXECUTION_TIMEOUT_SECS,
             error_db: loaded.error_db,
             debug_env: DebugEnv::new(),
             per_function_cpu: HashMap::new(),
@@ -68,6 +70,10 @@ impl ContractExecutor {
 
     pub fn set_timeout(&mut self, secs: u64) {
         self.timeout_secs = secs;
+    }
+
+    pub fn timeout_secs(&self) -> u64 {
+        self.timeout_secs
     }
 
     /// Enable auth mocking for interactive/test-like execution flows (e.g. REPL).
@@ -523,7 +529,7 @@ impl ContractExecutor {
                 message: format!("storage:{}:{}", access.sequence, access.key),
                 caller: None,
                 function: None,
-                call_depth: 0,
+                call_depth: Some(0),
                 storage_key: Some(access.key.clone()),
                 storage_value: value,
                 address: None,
@@ -537,7 +543,7 @@ impl ContractExecutor {
                 message: format!("{} -> {}", call.caller, call.callee),
                 caller: Some(call.caller.clone()),
                 function: Some(call.callee.clone()),
-                call_depth: call.depth as u64,
+                call_depth: Some(call.depth as u64),
                 storage_key: None,
                 storage_value: None,
                 address: None,
@@ -553,7 +559,7 @@ impl ContractExecutor {
                 message,
                 caller: None,
                 function: None,
-                call_depth: 0,
+                call_depth: Some(0),
                 storage_key: None,
                 storage_value: None,
                 address: None,

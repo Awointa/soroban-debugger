@@ -4,7 +4,15 @@ use soroban_debugger::runtime::executor::ContractExecutor;
 #[path = "fixtures/mod.rs"]
 mod fixtures;
 
-use soroban_debugger::debugger::source_map::SourceMap;
+use std::path::PathBuf;
+
+fn fixture_wasm(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("wasm")
+        .join(format!("{name}.wasm"))
+}
 
 #[test]
 fn source_map_missing_debug_info_is_graceful() {
@@ -180,12 +188,22 @@ fn source_map_partial_dwarf_is_graceful() {
     let malicious_dwarf = wasm_with_custom_section(".debug_info", &[0xde, 0xad, 0xbe, 0xef]);
     let mut sm = SourceMap::new();
     let res = sm.load(&malicious_dwarf);
-    
+
     // The load should succeed but produce no mappings and one or more diagnostics.
-    assert!(res.is_ok(), "load should not fail on partial/malformed DWARF units");
+    assert!(
+        res.is_ok(),
+        "load should not fail on partial/malformed DWARF units"
+    );
     assert!(sm.is_empty(), "expected no mappings for garbage DWARF");
-    assert!(!sm.diagnostics.is_empty(), "expected diagnostics explaining the failure");
-    
+    assert!(
+        !sm.diagnostics.is_empty(),
+        "expected diagnostics explaining the failure"
+    );
+
     let diag = &sm.diagnostics[0];
-    assert!(diag.message.contains("Failed to read"), "Diagnostics should mention read failure: {}", diag.message);
+    assert!(
+        diag.message.contains("Failed to read"),
+        "Diagnostics should mention read failure: {}",
+        diag.message
+    );
 }

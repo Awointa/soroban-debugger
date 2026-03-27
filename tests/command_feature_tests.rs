@@ -77,6 +77,8 @@ fn symbolic_cli_honors_caps_and_reports_truncation() {
             "4",
             "--path-cap",
             "2",
+            "--max-breadth",
+            "10",
             "--timeout",
             "30",
         ])
@@ -180,6 +182,48 @@ expected_return = "I64(1)"
             scenario.path().to_str().unwrap(),
             "--contract",
             wasm.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "All scenario steps passed successfully!",
+        ));
+}
+
+#[test]
+fn scenario_accepts_timeout_defaults_and_step_overrides() {
+    let wasm = fixture_wasm("counter");
+    let scenario = NamedTempFile::new().unwrap();
+    fs::write(
+        scenario.path(),
+        r#"
+[defaults]
+timeout_secs = 15
+
+[[steps]]
+name = "Increment"
+function = "increment"
+args = "[]"
+timeout_secs = 0
+expected_return = "I64(1)"
+
+[[steps]]
+name = "Read Counter"
+function = "get"
+expected_return = "I64(1)"
+"#,
+    )
+    .unwrap();
+
+    base_cmd()
+        .args([
+            "scenario",
+            "--scenario",
+            scenario.path().to_str().unwrap(),
+            "--contract",
+            wasm.to_str().unwrap(),
+            "--timeout",
+            "30",
         ])
         .assert()
         .success()

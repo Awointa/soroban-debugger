@@ -50,6 +50,22 @@ impl LoadedPlugin {
     pub fn trust(&self) -> &PluginTrustAssessment {
         &self.trust
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts_for_tests(
+        plugin: Box<dyn InspectorPlugin>,
+        path: PathBuf,
+        manifest: PluginManifest,
+        trust: PluginTrustAssessment,
+    ) -> Self {
+        Self {
+            plugin,
+            library: None,
+            path,
+            manifest,
+            trust,
+        }
+    }
 }
 
 /// Plugin loader that handles dynamic loading of plugin libraries
@@ -408,6 +424,14 @@ fn resolve_platform_library_path(manifest_dir: &Path, library: &str) -> Option<P
 
     None
 }
+
+impl Drop for LoadedPlugin {
+    fn drop(&mut self) {
+        info!("Unloading plugin: {}", self.manifest.name);
+
+        if let Err(e) = self.plugin.shutdown() {
+            error!("Error shutting down plugin {}: {}", self.manifest.name, e);
+        }
     }
 }
 
@@ -416,8 +440,8 @@ pub fn check_api_version(plugin_version: u32) -> Result<(), crate::plugin::api::
     use crate::plugin::api::{PluginError, PLUGIN_API_VERSION};
     if plugin_version != PLUGIN_API_VERSION {
         return Err(PluginError::VersionMismatch {
-            expected: PLUGIN_API_VERSION,
-            found: plugin_version,
+            required: PLUGIN_API_VERSION.to_string(),
+            found: plugin_version.to_string(),
         });
     }
     Ok(())
